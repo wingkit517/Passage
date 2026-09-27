@@ -58,7 +58,7 @@ tags: [<模块名>, feature|bugfix|test|docs, <architecture>]
 
 ## 八、风险技术债与未完成事项
 
-- <…>（登记到 `../../Passage_3c 技术债与风险.md` 的写编号，此处写指针）
+- <…>（登记到 `../../Passage_3b 决策·风险与缺口.md` 的写编号，此处写指针）
 
 ## 九、Agent 协作与交接 / 最终结果
 

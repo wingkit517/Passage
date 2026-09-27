@@ -122,7 +122,7 @@ TREK 是**工具型**（把旅行管起来），参照的笔记是**叙事型**�
 | 门牌反查 | `webmap.gis.gov.mo` 街道门牌查询系统 |
 
 **营业信息未与店家或口岸官方渠道全部二次核对**，出行前建议电话确认。
-已知缺口与坐标精度分级见 [`Passage_3e 交付明细与对照矩阵`](docs/Passage_3e%20交付明细与对照矩阵.md)（已知缺口与精度分级现分见 [`Passage_3c`](docs/Passage_3c%20技术债与风险.md) §二 与 [`Passage_2g`](docs/Passage_2g%20数据采集与来源规范.md) §二）。
+已知缺口与坐标精度分级见 [`Passage_3e 交付明细与对照矩阵`](docs/Passage_3e%20交付明细与对照矩阵.md)（已知缺口与精度分级现分见 [`Passage_3b`](docs/Passage_3b%20决策·风险与缺口.md) §三 与 [`Passage_2g`](docs/Passage_2g%20数据采集与来源规范.md) §二）。
 
 > **配图版权**：`assets/places/` 下的配图来自用户提供的小红书笔记，**仅限本次行程自用**。
 > 参照笔记的原图（版权归原作者）**未入库**，见 [`docs/assets/参考-小红书原图/README.md`](docs/assets/参考-小红书原图/README.md)。

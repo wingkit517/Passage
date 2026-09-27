@@ -13,7 +13,7 @@ fail=0
 limit_of() {
   case "$1" in archive/*) echo 64; return ;; esac
   case "$(basename "$1")" in
-    Passage_0*|文档维护约定.md|AGENTS_记录规范.md|AGENTS_平台规范.md|README.md) echo 8  ;;
+    Passage_0*|文档维护约定.md|AGENTS_记录规范.md|AGENTS_平台规范.md) echo 8  ;;
     AGENTS.md)                 echo 28 ;;
     Agent交办事项.md)            echo 20 ;;
     Passage_3*)                echo 36 ;;    # 状态类：表格密集
@@ -37,10 +37,10 @@ echo "── 开工必读（三件套）──"
 show "Passage_0 文档地图.md"; show "AGENTS.md"; show "Agent交办事项.md"
 echo "── 开工前置 ──"
 for f in AGENTS_记录规范.md AGENTS_平台规范.md; do show "$f"; done
-echo "── 体系规则 / 人类入口 ──"
-show "文档维护约定.md"; show "README.md"
+echo "── 体系规则 ──"
+show "文档维护约定.md"
 echo "── L2 按需层 ──"
-for f in Passage_1*.md Passage_2*.md Passage_4*.md engineering/*.md; do
+for f in Passage_1*.md Passage_2*.md engineering/*.md; do
   [ -f "$f" ] || continue
   case "$(basename "$f")" in Passage_0*|Passage_3*) continue ;; esac
   show "$f"
