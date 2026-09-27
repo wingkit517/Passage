@@ -69,6 +69,50 @@
   var dayColor = function (d) { return (DAYS[d] && DAYS[d].color) || '#1A1A1A'; };
   var byDay = function (d) { return PLACES.filter(function (p) { return p.day === d; }).sort(function (a, b) { return a.order - b.order; }); };
   var placeById = function (id) { return PLACES.filter(function (p) { return p.id === id; })[0]; };
+  /* 原计划的相邻站衔接分钟（"idA|idB" → 分钟）。
+     排序改变相邻关系后，原计划里出现过的相邻对（含反向）沿用原衔接，
+     新出现的相邻对才走直线距离粗估（见 estTransit）。 */
+  var ORIG_GAPS = {};
+
+  /* ---------------- 时间解析（v1.6 时间链的基础） ----------------
+     只认规整写法，解析不出就返回 null——当天标为不可调，绝不硬猜。
+     "HH:MM – HH:MM"（range）与 "HH:MM 后缀"（point，如「18:00 出发」）。 */
+  var CLOCK_RE = /^(\d{1,2}):(\d{2})\s*(?:[–\-—~～]\s*(?:次日\s*)?(\d{1,2}):(\d{2}))?\s*(.*)$/;
+  function hmMin(h, m) {
+    h = +h; m = +m;
+    if (!(h >= 0 && h < 24 && m >= 0 && m < 60)) return null;
+    return h * 60 + m;
+  }
+  function parseClock(str, duration) {
+    var m = CLOCK_RE.exec(String(str || '').trim());
+    if (!m) return null;
+    var start = hmMin(m[1], m[2]);
+    if (start == null) return null;
+    var end = null;
+    if (m[3] != null) {
+      end = hmMin(m[3], m[4]);
+      if (end == null) return null;
+      if (end < start) end += 1440;           /* 跨午夜（如 22:00–01:00） */
+    }
+    if (end == null) end = start + (duration > 0 ? duration : 0);
+    return { start: start, end: end, kind: m[3] != null ? 'range' : 'point', suffix: (m[5] || '').trim() };
+  }
+  /* 营业时间 → {open, close}：只有开头就是 HH:MM[–HH:MM] 才解析。
+     「次日」打烊与跨午夜打烊（close ≤ open）不设 close——当天行程不可能超，
+     硬设一个反而会误报。圆宝阿公「13:00 开始叫号入座」这类只有开门时刻的，
+     开门值照用（早到确实没座），打烊未知就不判超时。 */
+  function parseHours(str) {
+    var m = CLOCK_RE.exec(String(str || '').trim());
+    if (!m) return null;
+    var open = hmMin(m[1], m[2]);
+    if (open == null) return null;
+    var close = null;
+    if (m[3] != null) {
+      close = hmMin(m[3], m[4]);
+      if (close == null || close <= open) close = null;
+    }
+    return { open: open, close: close };
+  }
 
   /* ---------------- 数据规整 ----------------
      外部行程 JSON 不会像内置数据那样完整。
@@ -154,6 +198,32 @@
         'bakeTimes', 'srcTitle', 'srcUrl', 'srcNote'].forEach(function (k) { p[k] = p[k] || ''; });
       p.osmUrl = p.osmUrl || ('https://www.openstreetmap.org/?mlat=' + p.lat +
         '&mlon=' + p.lng + '#map=17/' + p.lat + '/' + p.lng);
+
+      /* —— 时间链（v1.6）——
+         clock 解析成分钟数并留档原计划（origStart / origDuration）；
+         startMin / endMin 是当前生效值，被调整后由 reflowDay 重算。
+         waitOpen / lateClose 是重算时打上的「等开门 / 超打烊」标记。 */
+      var ck = parseClock(p.clock, p.duration);
+      p.t0 = ck ? ck.start : null;
+      p.t1 = ck ? ck.end : null;
+      p.clockKind = ck ? ck.kind : '';
+      p.clockSuffix = ck ? ck.suffix : '';
+      p.startMin = p.t0;
+      p.endMin = p.t1;
+      p.origStart = p.t0;
+      p.origDuration = p.duration;
+      p.waitOpen = null;
+      p.lateClose = null;
+      var oh = parseHours(p.hours);
+      p.openMin = oh ? oh.open : null;
+      p.closeMin = oh ? oh.close : null;
+      /* clock 区间与 duration 打架时以 duration 为准重串（v1.6 实测踩过：Bamu 写的
+         13:30–14:00 配 duration 20，一调整就漂 10 分钟）。数据侧当场报出来，别静默 */
+      if (ck && ck.kind === 'range' && p.duration > 0 && ck.end - ck.start !== p.duration) {
+        console.warn('[' + BRAND + '] ' + (p.name || p.id) + ' 的 clock（' + p.clock +
+          '，' + (ck.end - ck.start) + ' 分钟）与 duration（' + p.duration + ' 分钟）不一致，' +
+          '调整时刻时以 duration 为准，请修正数据');
+      }
     });
     if (bad.length) console.warn('[' + BRAND + '] 以下地点缺少有效经纬度，已置为 0,0：', bad.join('、'));
 
@@ -166,6 +236,23 @@
         return ao - bo;
       });
       list.forEach(function (p, i) { p.order = i; p.badge = (di + 1) + '-' + (i + 1); });
+    });
+
+    /* 4.5 · 时间链：登记原计划的相邻衔接分钟，标记每天可否调整。
+       timingOk = 这天每个地点的 clock 都解析得出来——有一个解析不了就不给调，
+       宁可功能缺席也不显示一串错误时刻。 */
+    ORIG_GAPS = {};
+    DAYS.forEach(function (d, di) {
+      var list = byDay(di);
+      d.timingOk = list.length > 0 && list.every(function (p) { return p.t0 != null; });
+      d.dayStartMin = list.length ? list[0].t0 : null;
+      d.origDayStart = d.dayStartMin;
+      for (var i = 0; i + 1 < list.length; i++) {
+        ORIG_GAPS[list[i].id + '|' + list[i + 1].id] =
+          (list[i].t0 != null && list[i + 1].t0 != null)
+            ? Math.max(0, list[i + 1].t0 - list[i].t1) : 0;
+      }
+      recomputeLegGaps(di);
     });
 
     /* 5 · 城市视野：没给中心点就用地点的包围盒中心 */
@@ -270,6 +357,7 @@
   function renderHomeDays() {
     var el = document.getElementById('homeDays');
     if (!el) return;
+    /* 逐站路线明细已按用户要求去掉（列表与地图工作台里都有），日卡只留天名 / 主题 / 时段 / 停留合计 */
     el.innerHTML = DAYS.map(function (d) {
       var items = byDay(d.index);
       var total = items.reduce(function (s, p) { return s + p.duration; }, 0);
@@ -278,7 +366,6 @@
         '<span class="hd-count">' + items.length + ' 处</span></span>' +
         (d.theme ? '<span class="hd-theme">' + esc(d.theme) + '</span>' : '') +
         (d.span ? '<span class="hd-span">' + esc(d.span) + '</span>' : '') +
-        '<span class="hd-route">' + items.map(function (p) { return esc(p.name); }).join(' → ') + '</span>' +
         (total ? '<span class="hd-time">建议停留合计约 ' + Math.round(total / 6) / 10 + ' 小时</span>' : '') +
         '</button>';
     }).join('');
@@ -612,25 +699,23 @@
   function renderRouteSummary() {
     var el = document.getElementById('routeSummary');
     var label = 'YOUR ' + CITY.en + ' JOURNEY';
+    /* 逐站路线明细（rs-chain）已按用户要求去掉：总览卡只留天名 · 主题 + 时段跨度；
+       逐站在下面的地点列表里，单天视图补一处数与停留合计。 */
     if (state.day === 'all') {
       el.innerHTML = '<span class="rs-label">' + esc(label) + '</span>' +
         DAYS.map(function (d) {
-          var names = byDay(d.index).map(function (p) { return esc(p.name); }).join('<span class="rs-arrow">→</span>');
           return '<div style="color:' + esc(d.color) + ';font-weight:600">' + esc(d.name) +
-            (d.theme ? ' · ' + esc(d.theme) : '') +
-            '</div>' +
-            (d.span ? '<div style="color:#6B6B6B;font-size:11.5px">' + esc(d.span) + '</div>' : '') +
-            '<div class="rs-chain" style="color:#1A1A1A;font-size:12px;margin-bottom:5px">' + names + '</div>';
+            (d.theme ? ' · ' + esc(d.theme) : '') + '</div>' +
+            (d.span ? '<div style="color:#6B6B6B;font-size:11.5px;margin-bottom:5px">' + esc(d.span) + '</div>' : '');
         }).join('');
     } else {
       var d = DAYS[Number(state.day)];
-      var names = byDay(d.index).map(function (p) { return esc(p.name); }).join('<span class="rs-arrow">→</span>');
-      var total = byDay(d.index).reduce(function (s, p) { return s + p.duration; }, 0);
+      var list = byDay(d.index);
+      var total = list.reduce(function (s, p) { return s + p.duration; }, 0);
       el.innerHTML = '<span class="rs-label">' + esc(d.name) + (d.theme ? ' · ' + esc(d.theme) : '') + '</span>' +
-        '<div class="rs-chain">' + names + '</div>' +
         '<div style="color:#6B6B6B;font-size:11.5px;margin-top:5px">' +
         (d.span ? esc(d.span) + '<br>' : '') +
-        byDay(d.index).length + ' 处地点' +
+        list.length + ' 处地点' +
         (total ? ' · 建议停留合计约 ' + Math.round(total / 6) / 10 + ' 小时' : '') + '</div>';
     }
   }
@@ -662,6 +747,7 @@
         '<span class="pr-type">' + esc(p.type) + '</span></span>' +
         '<span class="pr-meta">' +
         (p.clock ? '<span class="pr-clock">' + esc(p.clock) + '</span>' : '') +
+        timeFlagHtml(p) +
         esc(DAYS[p.day].name) +
         (p.timeSlot ? ' · ' + esc(p.timeSlot) : '') +
         (p.duration ? ' · 约 ' + p.duration + ' 分钟' : '') + '</span>' +
@@ -696,6 +782,13 @@
   /* 关闭详情卡的三条路：① 右上角 × 按钮 ② Esc 键 ③ 点地图空白处 */
   document.getElementById('detailClose').addEventListener('click', function () { closeDetail(); });
   document.getElementById('detailCard').addEventListener('click', function (e) {
+    /* 停留时长步进：− / ＋ 各 5 分钟，改完当天后续站自动顺延 */
+    var step = e.target.closest('.dur-btn');
+    if (step) {
+      var cur = state.activeId ? placeById(state.activeId) : null;
+      if (cur) adjustDuration(cur, parseInt(step.dataset.dur, 10) || 0);
+      return;
+    }
     var img = e.target.closest('.dc-shot img');
     if (img) openShot(img.dataset.src || img.src, img.dataset.cap || '');
   });
@@ -710,7 +803,7 @@
     this.textContent = '减少动效：' + (state.reduceMotion ? '开' : '关');
   });
 
-  function renderAll() { renderDayTabs(); renderRouteSummary(); renderTypeChips(); renderList(); }
+  function renderAll() { renderDayTabs(); renderRouteSummary(); renderTimeTools(); renderTypeChips(); renderList(); }
 
   /* ---------------- 路线自动排序 ----------------
      实测结论（2026-09-27，本数据集）：手工顺序已接近最优——
@@ -836,6 +929,9 @@
     });
 
     renumber();
+    /* 顺序变了，衔接分钟跟着新相邻关系重算，各站时刻按新顺序重串
+       （撤销排序时同样重串，原计划相邻对的原衔接会原样找回） */
+    days.forEach(function (di) { recomputeLegGaps(di); reflowDay(di); });
     refreshRouteGeometry();
     renderAll();
     renderMarkers();
@@ -857,7 +953,8 @@
       var pct = ((before - after) / before) * 100;
       sortNote('<b>' + scope + '</b>：总距离 ' + km(before) + ' km → <b>' + km(after) + ' km</b>' +
         '<span class="rt-good">（省 ' + km(before - after) + ' km，-' + pct.toFixed(1) + '%）</span>' +
-        '<br><span class="rt-warn">只优化距离，不考虑「把某处留到夜里」这类编排意图。</span>');
+        '<br>各站时刻已按新顺序衔接。<br>' +
+        '<span class="rt-warn">只优化距离，不考虑「把某处留到夜里」这类编排意图。</span>');
     }
   }
 
@@ -868,6 +965,7 @@
       if (p) { p.order = s.order; p.badge = s.badge; }
     });
     sortSnapshot = null;
+    DAYS.forEach(function (d) { recomputeLegGaps(d.index); reflowDay(d.index); });
     refreshRouteGeometry();
     renderAll();
     renderMarkers();
@@ -888,6 +986,160 @@
     state.anchorStart = !state.anchorStart;
     renderAnchorBtn();
   });
+
+  /* ---------------- 行程时间调整（v1.6） ----------------
+     每站可改停留分钟（duration）、每天首站可改出发时刻；改动后当天后续各站按
+     「上一站离开 + 衔接分钟」顺延。衔接分钟取自当前计划的站间间隔——
+     它大多是路程时间，个别是「等开门」的空档（如薈真集 10:30 才开门），
+     所以重算时到达时刻不会早于开门时间（早到会钳到开门并打 waitOpen 标记）；
+     离开晚于打烊则打 lateClose 标记。营业时间解析不出就不参与判断——未核实就是未核实。 */
+
+  /* 排序后新出现的相邻对没有计划衔接可用，按直线距离粗估（仅用于串时刻，非实测）：
+     ≤1.2km 按步行 4.5km/h + 进场 2 分钟；更远按车程 25km/h + 等车 8 分钟。 */
+  function estTransit(a, b) {
+    var km = gap(a, b) / 1000;
+    return Math.max(5, Math.round(km <= 1.2 ? km / 4.5 * 60 + 2 : km / 25 * 60 + 8));
+  }
+
+  /* 相邻衔接：原计划出现过的相邻对（含反向）用原值，新对用粗估 */
+  function recomputeLegGaps(di) {
+    var list = byDay(di);
+    list.forEach(function (p, i) {
+      if (i === list.length - 1) { p.gapNext = 0; return; }
+      var fwd = ORIG_GAPS[p.id + '|' + list[i + 1].id];
+      var rev = ORIG_GAPS[list[i + 1].id + '|' + p.id];
+      p.gapNext = fwd != null ? fwd : (rev != null ? rev : estTransit(p, list[i + 1]));
+    });
+  }
+
+  function fmtMin(v) {
+    v = ((Math.round(v) % 1440) + 1440) % 1440;
+    var h = Math.floor(v / 60), m = v % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+  }
+  function fmtClock(p) {
+    if (p.clockKind === 'range' && p.duration > 0)
+      return fmtMin(p.startMin) + ' – ' + fmtMin(p.endMin);
+    return fmtMin(p.startMin) + (p.clockSuffix ? ' ' + p.clockSuffix : '');
+  }
+
+  /* 重串某天：从首站出发时刻起，逐站 到达 = 上一站离开 + 衔接，再按开门钳制。
+     天跨度（DAYS.span）与行程级 stayHours 同步现算。 */
+  function reflowDay(di) {
+    var d = DAYS[di];
+    if (!d || !d.timingOk) return;
+    var list = byDay(di);
+    var t = d.dayStartMin;
+    list.forEach(function (p, i) {
+      p.waitOpen = null;
+      if (i > 0) t = list[i - 1].endMin + list[i - 1].gapNext;
+      if (p.openMin != null && t < p.openMin) { t = p.openMin; p.waitOpen = p.openMin; }
+      p.startMin = t;
+      p.endMin = t + p.duration;
+      p.lateClose = (p.closeMin != null && p.endMin > p.closeMin) ? p.closeMin : null;
+    });
+    list.forEach(function (p) { p.clock = fmtClock(p); });
+    if (d.span) {
+      var m = /^\s*(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(.*)$/.exec(d.span);
+      if (m) d.span = fmtMin(list[0].startMin) + ' – ' + fmtMin(list[list.length - 1].endMin) + m[3];
+    }
+    var totalMin = PLACES.reduce(function (s, p) { return s + p.duration; }, 0);
+    D.TRIP.stayHours = Math.round(totalMin / 6) / 10;
+  }
+
+  function dayTimingDirty(di) {
+    var d = DAYS[di];
+    if (!d || !d.timingOk) return false;
+    if (d.dayStartMin !== d.origDayStart) return true;
+    return byDay(di).some(function (p) { return p.duration !== p.origDuration; });
+  }
+
+  /* 时间改动后的统一重绘：面板全套 + 首页日卡 + 总览统计 + 打开中的详情卡 */
+  function applyTime(di) {
+    reflowDay(di);
+    renderAll();
+    renderHomeDays();
+    renderOverview();
+    var ap = state.activeId ? placeById(state.activeId) : null;
+    if (ap && ap.day === di) renderDetail(ap, true);
+  }
+
+  function setDayStart(di, hhmm) {
+    var d = DAYS[di];
+    if (!d || !d.timingOk) return;
+    var m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+    var v = m ? hmMin(m[1], m[2]) : null;
+    if (v == null) { renderTimeTools(); return; }
+    d.dayStartMin = v;
+    applyTime(di);
+  }
+
+  function adjustDuration(p, delta) {
+    if (!p || !DAYS[p.day].timingOk || !delta) return;
+    p.duration = Math.min(600, Math.max(0, p.duration + delta));
+    applyTime(p.day);
+  }
+
+  /* 还原这天 = 回到原计划的出发时刻与各站停留。不动顺序——那是「撤销排序」的职责 */
+  function resetDayTiming(di) {
+    var d = DAYS[di];
+    if (!d || !d.timingOk) return;
+    byDay(di).forEach(function (p) { p.duration = p.origDuration; });
+    d.dayStartMin = d.origDayStart;
+    applyTime(di);
+  }
+
+  function timeFlagHtml(p) {
+    var out = '';
+    if (p.waitOpen != null) out += '<span class="pr-flag">等开门 ' + fmtMin(p.waitOpen) + '</span>';
+    if (p.lateClose != null) out += '<span class="pr-flag pr-flag-late">超打烊 ' + fmtMin(p.lateClose) + '</span>';
+    return out;
+  }
+
+  function renderTimeTools() {
+    var el = document.getElementById('timeTools');
+    if (!el) return;
+    if (state.day === 'all') { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    var di = Number(state.day), d = DAYS[di];
+    if (!d || !d.timingOk) {
+      el.innerHTML = '<p class="rt-note">这一天有地点的时间无法解析，暂不能调整时刻。</p>';
+      return;
+    }
+    var flags = [];
+    byDay(di).forEach(function (p) {
+      if (p.waitOpen != null) flags.push(esc(p.name) + ' 等开门 ' + fmtMin(p.waitOpen));
+      if (p.lateClose != null) flags.push(esc(p.name) + ' 已超打烊 ' + fmtMin(p.lateClose));
+    });
+    el.innerHTML =
+      '<div class="tt-row">' +
+        '<span class="tt-label">出发</span>' +
+        '<input type="time" class="tt-input" id="dayStartInput" value="' + esc(fmtMin(d.dayStartMin)) +
+          '" aria-label="' + esc(d.name) + ' 出发时刻">' +
+        '<button class="btn btn-sm btn-ghost" id="resetDayTiming"' +
+          (dayTimingDirty(di) ? '' : ' hidden') + '>还原这天</button>' +
+      '</div>' +
+      (flags.length ? '<p class="rt-note">⚠ ' + flags.join('；') + '</p>' : '');
+  }
+
+  document.getElementById('timeTools').addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'dayStartInput') setDayStart(Number(state.day), e.target.value);
+  });
+  document.getElementById('timeTools').addEventListener('click', function (e) {
+    if (e.target.closest('#resetDayTiming')) resetDayTiming(Number(state.day));
+  });
+
+  /* 停留时长步进（详情卡信息块内） */
+  function stayStepperHtml(p) {
+    if (!DAYS[p.day].timingOk) return '约 ' + p.duration + ' 分钟';
+    return '<span class="dur-step">' +
+      '<button type="button" class="dur-btn" data-dur="-5" aria-label="停留减少 5 分钟">−</button>' +
+      '<b class="dur-num">' + p.duration + '</b><span class="dur-unit">分钟</span>' +
+      '<button type="button" class="dur-btn" data-dur="5" aria-label="停留增加 5 分钟">＋</button>' +
+      '</span>' +
+      (p.duration !== p.origDuration
+        ? '<span class="dci-src">原计划 ' + p.origDuration + ' 分钟</span>' : '');
+  }
 
   /* ---------------- 响应式 ---------------- */
   function applyResponsive() {
@@ -953,8 +1205,12 @@
     var hours = p.hours ? esc(p.hours) +
       (p.hoursFrom && p.hoursFrom !== '—'
         ? '<span class="dci-src">来源：' + esc(p.hoursFrom) + '</span>' : '') : '';
+    /* 计划时间的小字注：被调整过就说「已按停留与衔接顺延」，没动过才是「按营业时间排定」 */
+    var clockNote = dayTimingDirty(p.day) ? '已按停留与衔接顺延' : '按营业时间排定';
     var rows = [
-      ['计划时间', p.clock ? esc(p.clock) + '<span class="dci-src">按营业时间排定</span>' : ''],
+      ['计划时间', p.clock ? esc(p.clock) + timeFlagHtml(p) +
+        '<span class="dci-src">' + clockNote + '</span>' : ''],
+      ['停留时长', p.duration > 0 ? stayStepperHtml(p) : ''],
       ['地址', esc(p.addr)],
       ['营业时间', hours],
       ['出炉时间', esc(p.bakeTimes)],
@@ -1026,7 +1282,10 @@
     return wasOpen;
   }
 
-  function renderDetail(p) {
+  function renderDetail(p, keepScroll) {
+    var detailEl = document.getElementById('detail');
+    /* 调整停留时长会整个重渲染详情卡——把滚动位置带过去，不然每点一次都跳回顶部 */
+    var savedScroll = keepScroll ? detailEl.scrollTop : 0;
     document.getElementById('detailEmpty').hidden = true;
     document.getElementById('detail').classList.remove('is-empty');
     var card = document.getElementById('detailCard');
@@ -1055,8 +1314,7 @@
         '<div class="dc-pills">' +
         (p.clock ? '<span class="dc-pill dc-pill-time">' + esc(p.clock) + '</span>' : '') +
         '<span class="dc-pill">' + esc(DAYS[p.day].name) + '</span>' +
-        (p.timeSlot ? '<span class="dc-pill">' + esc(p.timeSlot) + '</span>' : '') +
-        (p.duration ? '<span class="dc-pill">建议停留约 ' + p.duration + ' 分钟</span>' : '') + '</div>' +
+        (p.timeSlot ? '<span class="dc-pill">' + esc(p.timeSlot) + '</span>' : '') + '</div>' +
       '</div>' +
       '<div class="dc-body">' +
         gallery(p) +
@@ -1088,6 +1346,7 @@
     card.querySelector('[data-act="gmap"]').addEventListener('click', function () {
       window.open('https://www.openstreetmap.org/?mlat=' + p.lat + '&mlon=' + p.lng + '#map=17/' + p.lat + '/' + p.lng, '_blank', 'noopener');
     });
+    if (keepScroll) detailEl.scrollTop = savedScroll;
   }
 
   /* ---------------- 只读调试句柄 ----------------

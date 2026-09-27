@@ -94,7 +94,6 @@ h1,h2,h3{margin:0;font-weight:600}
 .hd-count{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
 .hd-theme{font-size:12px;color:var(--ink)}
 .hd-span{font-size:11.5px;color:var(--c);font-weight:600;letter-spacing:.01em}
-.hd-route{font-size:11.5px;color:var(--muted);line-height:1.6}
 .hd-time{font-size:11px;color:var(--muted);margin-top:2px}
 .home-foot{display:flex;gap:10px;justify-content:center;padding:24px 20px 48px}
 
@@ -150,12 +149,38 @@ h1,h2,h3{margin:0;font-weight:600}
 .rt-note .rt-warn{color:#8A6A1F}
 .rt-note[hidden]{display:none !important}
 
+/* 行程时间调整（v1.6）：出发时刻 + 还原当天 + 衔接警告。
+   只在单天视图渲染；警告与排序提示共用 .rt-note 的样式。 */
+.time-tools{padding:0 14px 12px}
+.tt-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tt-label{font-size:11.5px;color:var(--muted);flex:0 0 auto}
+.tt-input{
+  font-family:var(--mono);font-size:12.5px;color:var(--ink);
+  background:var(--paper);border:1px solid var(--line);border-radius:8px;
+  padding:5px 8px;font-variant-numeric:tabular-nums;
+}
+.tt-input:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.time-tools .rt-note{margin-top:8px}
+/* 停留时长步进（详情卡信息块内） */
+.dur-step{display:inline-flex;align-items:center;gap:7px;vertical-align:baseline}
+.dur-num{font-family:var(--mono);font-weight:700;font-variant-numeric:tabular-nums}
+.dur-unit{font-size:11px;color:var(--muted)}
+.dur-btn{
+  position:relative;width:24px;height:24px;border-radius:50%;
+  border:1px solid var(--line);background:#fff;color:var(--ink);
+  font-size:14px;line-height:1;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.dur-btn:hover{background:var(--paper-2)}
+/* 列表行 / 详情卡里的衔接警告：等开门（黄）/ 超打烊（红） */
+.pr-flag{font-size:10.5px;font-weight:600;color:#8A6A1F;margin-left:2px}
+.pr-flag-late{color:#A2342A}
+
 .route-summary{
   margin:0 14px 12px;padding:11px 13px;border-radius:10px;background:var(--paper-2);
   font-size:12.5px;line-height:1.7;color:var(--ink);border:1px solid var(--line-soft);
 }
 .route-summary .rs-label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--muted);margin-bottom:4px}
-.route-summary .rs-arrow{color:var(--muted);margin:0 3px}
 
 .filters{padding:0 14px 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .filter-label{font-size:11.5px;color:var(--muted)}
@@ -361,7 +386,12 @@ body.no-scroll,body.no-scroll #main{overflow:hidden}
 
   /* 触控目标统一抬到 44px（Apple HIG / Material 的下限） */
   .btn{padding:12px 20px}
-  .btn-sm,.route-tools .btn,.dc-actions .btn{min-height:44px}
+  .btn-sm,.route-tools .btn,.time-tools .btn,.dc-actions .btn{min-height:44px}
+  .tt-input{min-height:44px}
+  /* 步进按钮视觉 24px，可点区域用透明伪元素外扩到 44px（同地图徽章的做法）。
+     外扩量按 padding box 算：border-box 下 24px 按钮 − 2px 边框 = 22px，
+     22 + 11×2 = 44，写 −10px 只能得到 42px。 */
+  .dur-btn::after{content:"";position:absolute;inset:-11px;border-radius:50%}
   .daytab{min-height:44px;padding:10px 16px}
   .chip{min-height:44px;padding:10px 14px}
   /* 天数与类型筛选在窄屏改成单行横向滑动。
@@ -393,14 +423,6 @@ body.no-scroll,body.no-scroll #main{overflow:hidden}
   .panel > *{flex:0 0 auto}
   /* 列表跟着面板一起滚，不再自己滚 */
   .place-list{flex:0 0 auto;min-height:0;overflow:visible}
-  /* 总览摘要会把每天的地点串整个列出来，窄屏一屏放不下，裁成一行；
-     想看全的切到具体某一天（那时摘要是单天、不裁）。
-     只用 -webkit-line-clamp，不写标准 line-clamp——后者会把 display 改成 flow-root，
-     反倒让 -webkit-box 那套失效。max-height:1lh 是兜底硬顶。 */
-  .route-summary .rs-chain{
-    display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;
-    overflow:hidden;max-height:1lh;
-  }
   /* 安全区留白挂在底栏上，不挂在面板上——
      挂在面板上会让收起态的内容比 max-height 高出安全区那一截，白白多出一条滚动。 */
   .panel-foot{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
@@ -441,9 +463,11 @@ body.no-scroll,body.no-scroll #main{overflow:hidden}
   .maplibregl-ctrl-bottom-right{bottom:calc(var(--panel-peek,92px) + 10px)}
   /* 标记：圆点略微放大，但真正的可点区域用透明伪元素往外扩 8px 撑到 44px。
      直接把圆点画成 44px 会让 13 个地点在澳门这么小的地方糊成一片。 */
-  /* 手机上放大到 32px 高（横向椭圆），触控热区靠 ::after 外扩到 ≥44px */
+  /* 手机上放大到 32px 高（横向椭圆），触控热区靠 ::after 外扩到 ≥44px。
+     外扩按 padding box 算（border-box：32px − 2.5px×2 边框 = 27px）；
+     远缩放档徽章更小（27px − 2px×2 = 23px），−9px 才能让两档都 ≥44px（v1.6 实测补的 1px）。 */
   .place-badge{height:32px;min-width:32px;padding:0 9px;font-size:12px}
-  .place-badge::after{content:"";position:absolute;inset:-8px;border-radius:50%}
+  .place-badge::after{content:"";position:absolute;inset:-9px;border-radius:50%}
   #map.zoom-far .place-badge{height:27px;min-width:27px;padding:0 7px;font-size:10px}
 
   .shotbox{padding:16px}
