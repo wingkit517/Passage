@@ -1,0 +1,25 @@
+# ---------- macOS ----------
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# ---------- 编辑器 ----------
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---------- Agent 运行时（本机状态，不是项目源码） ----------
+.workbuddy-ai/
+.claude/
+.cursor/
+
+# ---------- 本地临时服务 ----------
+*.log
+__pycache__/
+*.py[cod]
