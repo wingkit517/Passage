@@ -24,6 +24,26 @@
     state.reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch (e) {}
 
+  /* ---------------- 断点判定 ----------------
+     三个布局，用同一个 980px 宽度阈值分叉：
+       desktop  宽屏三栏
+       sheet    竖屏手机：底部抽屉（行程面板收起成一条，详情是浮层）
+       flat     横屏手机：左侧常驻列表 + 右侧浮出详情（矮屏放不下底部抽屉）
+     布局只认宽度，判定只写在这里——CSS 那边靠 media query 对齐同一组条件。 */
+  function isNarrow() { return window.innerWidth <= 980; }
+  function isFlat() {
+    return isNarrow() && window.innerWidth > window.innerHeight && window.innerHeight <= 560;
+  }
+
+  /* 收起态只露标题栏那一条。这个高度必须实测——标题换行、字号变化都会让它变，
+     写死一个数字迟早对不上（旧版写死 152px 就是这么坏的）。 */
+  function syncPanelPeek() {
+    var head = document.querySelector('.panel-head');
+    if (!head) return;
+    var h = Math.round(head.getBoundingClientRect().height);
+    if (h > 0) document.documentElement.style.setProperty('--panel-peek', h + 'px');
+  }
+
   /* ---------------- 图标 ---------------- */
   var ICONS = {
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
@@ -476,12 +496,15 @@
     if (!pts.length) return;
     var b = new maplibregl.LngLatBounds();
     pts.forEach(function (p) { b.extend([p.lng, p.lat]); });
-    // 手机上底部有行程面板，留出更大的下边距，避免标记被遮住
-    var narrow = window.innerWidth <= 980;
+    // 手机上底部有行程面板，留出更大的下边距，避免标记被遮住。
+    // 竖屏按「收起态」留（那是默认状态）；横屏面板在左侧，上下对称即可。
+    var pad = isFlat()
+      ? { top: 50, bottom: 50, left: 50, right: 50 }
+      : isNarrow()
+        ? { top: 70, bottom: 132, left: 30, right: 30 }
+        : { top: 90, bottom: 90, left: 90, right: 90 };
     map.fitBounds(b, {
-      padding: narrow
-        ? { top: 76, bottom: 200, left: 36, right: 36 }
-        : { top: 90, bottom: 90, left: 90, right: 90 },
+      padding: pad,
       duration: state.reduceMotion ? 0 : 900,
       pitch: CITY.pitch,
       bearing: CITY.bearing,
@@ -554,14 +577,14 @@
             (d.theme ? ' · ' + esc(d.theme) : '') +
             '</div>' +
             (d.span ? '<div style="color:#6B6B6B;font-size:11.5px">' + esc(d.span) + '</div>' : '') +
-            '<div style="color:#1A1A1A;font-size:12px;margin-bottom:5px">' + names + '</div>';
+            '<div class="rs-chain" style="color:#1A1A1A;font-size:12px;margin-bottom:5px">' + names + '</div>';
         }).join('');
     } else {
       var d = DAYS[Number(state.day)];
       var names = byDay(d.index).map(function (p) { return esc(p.name); }).join('<span class="rs-arrow">→</span>');
       var total = byDay(d.index).reduce(function (s, p) { return s + p.duration; }, 0);
       el.innerHTML = '<span class="rs-label">' + esc(d.name) + (d.theme ? ' · ' + esc(d.theme) : '') + '</span>' +
-        '<div>' + names + '</div>' +
+        '<div class="rs-chain">' + names + '</div>' +
         '<div style="color:#6B6B6B;font-size:11.5px;margin-top:5px">' +
         (d.span ? esc(d.span) + '<br>' : '') +
         byDay(d.index).length + ' 处地点' +
@@ -814,32 +837,47 @@
   });
 
   /* ---------------- 响应式 ---------------- */
-  var isNarrow = function () { return window.innerWidth <= 980; };
-
   function applyResponsive() {
     var panel = document.getElementById('panel');
     var detail = document.getElementById('detail');
-    if (isNarrow()) {
-      if (!panel.dataset.touched) panel.classList.add('is-collapsed');
-      if (!state.activeId) detail.hidden = true;
-    } else {
+    syncPanelPeek();
+
+    if (!isNarrow()) {
+      /* 桌面：面板与详情栏都常驻，没选中地点时详情栏显示空态提示 */
       panel.classList.remove('is-collapsed');
       detail.hidden = false;
+      return;
     }
+    if (isFlat()) {
+      /* 横屏：面板常驻在左侧，详情按需从右侧浮出 */
+      panel.classList.remove('is-collapsed');
+      detail.hidden = !state.activeId;
+      return;
+    }
+    /* 竖屏手机：面板默认收起成一条（用户手动动过就不再自动收），详情是浮层 */
+    if (!panel.dataset.touched) panel.classList.add('is-collapsed');
+    if (!state.activeId) detail.hidden = true;
   }
 
-  /* 手机上点面板标题栏可收起 / 展开行程面板 */
+  /* 竖屏手机上点面板标题栏可收起 / 展开行程面板。
+     横屏面板是常驻的一栏，折叠没意义，直接不响应。 */
   document.querySelector('.panel-head').addEventListener('click', function () {
-    if (!isNarrow()) return;
+    if (!isNarrow() || isFlat()) return;
     var panel = document.getElementById('panel');
     panel.dataset.touched = '1';
     panel.classList.toggle('is-collapsed');
   });
 
+  var resizeTimer = 0;
   window.addEventListener('resize', function () {
-    if (!isNarrow()) document.getElementById('panel').dataset.touched = '';
-    applyResponsive();
-    if (map) map.resize();
+    /* 手机浏览器地址栏收起/展开会连着触发 resize，节流一下，
+       顺便等布局稳定后再量标题栏高度。 */
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (!isNarrow()) document.getElementById('panel').dataset.touched = '';
+      applyResponsive();
+      if (map) map.resize();
+    }, 120);
   });
 
   /* ---------------- 地点详情 ---------------- */
@@ -852,7 +890,7 @@
     renderDetail(p);
     if (fly) flyToPlace(p);
     var d = document.getElementById('detail');
-    if (d && window.innerWidth <= 980) d.hidden = false;
+    if (d && isNarrow()) d.hidden = false;
   }
 
   /* 实用信息块：地址 / 营业时间 / 电话 / 价位 / 怎么去。
@@ -923,13 +961,13 @@
 
   /* 关掉右侧详情卡。
      桌面端这一栏是常驻的，「关闭」= 回到未选中的空态提示（而不是把整栏留白）；
-     移动端详情是浮层，直接整块收起。 */
+     手机上详情是浮层（竖屏在底部、横屏在右侧），直接整块收起。 */
   function closeDetail() {
     var wasOpen = !!state.activeId;
     state.activeId = null;
     document.getElementById('detailEmpty').hidden = false;
     document.getElementById('detailCard').hidden = true;
-    if (window.innerWidth <= 980) document.getElementById('detail').hidden = true;
+    if (isNarrow()) document.getElementById('detail').hidden = true;
     document.getElementById('detail').classList.add('is-empty');
     if (wasOpen) { renderList(); renderMarkers(); }
     return wasOpen;
