@@ -148,7 +148,7 @@
       }
       /* 实用信息：缺省为空串，详情卡只渲染有值的行 */
       ['addr', 'hours', 'hoursFrom', 'phone', 'priceNote', 'walk', 'coordNote',
-        'bakeTimes', 'srcTitle', 'srcUrl'].forEach(function (k) { p[k] = p[k] || ''; });
+        'bakeTimes', 'srcTitle', 'srcUrl', 'srcNote'].forEach(function (k) { p[k] = p[k] || ''; });
       p.osmUrl = p.osmUrl || ('https://www.openstreetmap.org/?mlat=' + p.lat +
         '&mlon=' + p.lng + '#map=17/' + p.lat + '/' + p.lng);
     });
@@ -223,17 +223,23 @@
       if (el) el.textContent = text;
     };
     document.title = t.title + ' · 旅行工作台';
+    /* 只有一天时，「逐天看」「点一天」这些说法会读着别扭——文案跟着天数走 */
+    var oneDay = DAYS.length === 1;
     set('brandMark', c.name + '旅行工作台');
     set('brandSub', c.en + ' · ' + PLACES.length + ' PLACES, ONE CITY');
-    set('hhMark', c.en + ' · ' + DAYS.length + ' 日行程');
-    set('hhSub', DAYS.length + ' 天按地理片区切分，每天的地点尽量集中，按步行距离串成一条线。' +
-      '点开地图工作台，可以逐天看路线、看周边吃什么。');
-    set('homeSec', '这 ' + DAYS.length + ' 天怎么走');
+    set('hhMark', c.en + ' · ' + (oneDay ? '1 日行程' : DAYS.length + ' 日行程'));
+    set('hhSub', oneDay
+      ? '一天走完：上午澳门半岛、下午路环岛，地点按营业时间与步行距离串成一条线。' +
+        '点开地图工作台，可以看路线、看周边吃什么。'
+      : DAYS.length + ' 天按地理片区切分，每天的地点尽量集中，按步行距离串成一条线。' +
+        '点开地图工作台，可以逐天看路线、看周边吃什么。');
+    set('homeSec', oneDay ? '这一天怎么走' : '这 ' + DAYS.length + ' 天怎么走');
     set('tripTitle', t.title);
     set('panelTitle', t.title);
     set('mapBadge', c.name + ' · ' + PLACES.length + ' PLACES');
     var sub = document.getElementById('panelSub');
-    if (sub) sub.innerHTML = '<b>' + PLACES.length + '</b> 处地点 · 点一天，看当天的路线';
+    if (sub) sub.innerHTML = '<b>' + PLACES.length + '</b> 处地点 · ' +
+      (oneDay ? '按时间顺序串成一条线' : '点一天，看当天的路线');
   }
 
   /* ---------------- 行程总览 ---------------- */
@@ -557,6 +563,9 @@
 
   function renderDayTabs() {
     var wrap = document.getElementById('dayTabs');
+    /* 只有一天时没有「切天」这回事，「总览」与「第 1 天」内容完全一样，整行不显示 */
+    if (DAYS.length < 2) { wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
     var tabs = [{ v: 'all', label: '总览', color: '#1A1A1A' }].concat(DAYS.map(function (d) {
       return { v: String(d.index), label: d.name, color: d.color };
     }));
@@ -796,7 +805,10 @@
     renderHomeDays();
 
     var km = function (m) { return (m / 1000).toFixed(1); };
-    var scope = days.length === DAYS.length ? '全部 ' + DAYS.length + ' 天' : DAYS[days[0]].name;
+    /* 只有一天时说「全部 1 天」很别扭，直接用那天的名字 */
+    var scope = days.length === DAYS.length && DAYS.length > 1
+      ? '全部 ' + DAYS.length + ' 天'
+      : DAYS[days[0]].name;
     if (!changed || before - after < 1) {
       sortSnapshot = null;
       sortNote('<b>' + scope + '</b>：当前顺序已经是最短的，没有可优化的折返。');
@@ -1018,12 +1030,12 @@
           : '<a href="' + esc(p.osmUrl) + '" target="_blank" rel="noopener">查看资料来源 ↗</a>') +
         '<div class="dc-src-note">' +
           '地点坐标：' + esc(p.coordNote ? 'Photon / OpenStreetMap，' + p.coordNote : 'OpenStreetMap。') + '<br>' +
-          '内容来源：用户提供的小红书笔记（正文与配图）。采集于 2026-09-27。<br>' +
+          '内容来源：' + esc(p.srcNote || '用户提供的小红书笔记（正文与配图）。采集于 2026-09-27。') + '<br>' +
           (p.imgs.length
             ? '配图：' + p.imgs.length + ' 张，取自对应笔记的实拍照片（点击可看大图）。<br>'
             : '') +
-          '计划时间按各地点营业时间排定；营业时间已逐条标注来源，' +
-          '标「门店照片」或「笔记正文」的未与店家官方渠道二次核对。' +
+          '计划时间按各地点营业时间排定；营业时间已逐条标注来源（见上面「营业时间」一行），' +
+          '未与店家或口岸官方渠道全部二次核对。' +
         '</div></div>' +
         '<div class="dc-actions">' +
           '<button class="btn btn-primary" data-act="nav">在地图中打开</button>' +
