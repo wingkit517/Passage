@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>旅行工作台</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5/dist/maplibre-gl.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" id="brandMark">旅行工作台</span>
+    <span class="brand-sub" id="brandSub"></span>
+  </div>
+  <nav class="nav" id="nav">
+    <button class="nav-btn is-active" data-view="home">行程总览</button>
+    <button class="nav-btn" data-view="map">地图工作台</button>
+  </nav>
+</header>
+
+<main id="main">
+
+  <!-- ============ 行程总览 ============ -->
+  <section class="view is-active" id="view-home">
+    <div class="home-wrap">
+
+      <div class="home-hero">
+        <div class="hh-top">
+          <span class="hh-mark" id="hhMark"></span>
+          <span class="hh-tag">行前规划</span>
+        </div>
+        <h1 class="hh-title" id="tripTitle"></h1>
+        <p class="hh-sub" id="hhSub"></p>
+        <div class="home-stats" id="homeStats"></div>
+      </div>
+
+      <h2 class="home-sec" id="homeSec">每天怎么走</h2>
+      <div class="home-days" id="homeDays"></div>
+
+      <div class="home-foot">
+        <button class="btn btn-primary" id="goMap">进入地图工作台 →</button>
+        <button class="btn btn-ghost" id="replayHome">重播动效</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 地图工作台 ============ -->
+  <section class="view" id="view-map">
+    <div class="workbench">
+
+      <aside class="panel" id="panel">
+        <div class="panel-head">
+          <h1 class="panel-title" id="panelTitle"></h1>
+          <p class="panel-sub" id="panelSub"></p>
+        </div>
+
+        <div class="daytabs" id="dayTabs"></div>
+
+        <div class="route-tools" id="routeTools">
+          <div class="rt-btns">
+            <button class="btn btn-sm btn-primary" id="autoSort">自动排序</button>
+            <button class="btn btn-sm btn-ghost" id="undoSort" hidden>撤销</button>
+            <button class="btn btn-sm btn-ghost" id="toggleAnchor"
+                    title="开启后，每天的第一站不会被移动">起点锁定：开</button>
+          </div>
+          <p class="rt-note" id="sortNote" hidden></p>
+        </div>
+
+        <div class="route-summary" id="routeSummary"></div>
+
+        <div class="filters">
+          <span class="filter-label">按类型</span>
+          <div class="chips" id="typeChips"></div>
+        </div>
+
+        <ol class="place-list" id="placeList"></ol>
+
+        <div class="panel-foot">
+          <button class="btn btn-ghost btn-sm" id="resetView">重置视角</button>
+          <button class="btn btn-ghost btn-sm" id="toggleMotion">减少动效：关</button>
+        </div>
+      </aside>
+
+      <div class="map-wrap">
+        <div id="map"></div>
+        <div class="map-badge" id="mapBadge"></div>
+        <div class="map-legend" id="mapLegend"></div>
+        <div class="map-fallback" id="mapFallback" hidden>
+          <b>地图底图未能加载</b>
+          <span>瓦片源不可达时，左侧列表与右侧详情仍可正常使用。</span>
+        </div>
+      </div>
+
+      <aside class="detail is-empty" id="detail">
+        <div class="detail-closewrap">
+          <button class="detail-close" id="detailClose" aria-label="关闭详情" title="关闭（Esc）">×</button>
+        </div>
+        <div class="detail-empty" id="detailEmpty">
+          <span class="de-mark">FIELD GUIDE</span>
+          <p>点地图上的编号，或左侧列表里的地点，查看吃饭、观景与散步建议。</p>
+        </div>
+        <article class="detail-card" id="detailCard" hidden></article>
+      </aside>
+
+    </div>
+  </section>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<script src="data/places.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
