@@ -219,19 +219,23 @@ h1,h2,h3{margin:0;font-weight:600}
 .map-fallback span{color:var(--muted)}
 
 /* place badge marker on map */
+/* 地图编号徽章：横向椭圆。
+   原来是 30×30 固定圆，编号到两位数（如 2-14）只能把字号压到 9px 硬塞进去，
+   字挤字还看不清。改成宽度随编号长度增长的椭圆后，整条标签横向铺开，
+   字号也不用再分档——min-width 只保证最短的「1-1」仍是一个短椭圆而不是细长条。 */
 .place-badge{
-  width:30px;height:30px;border-radius:50%;background:#fff;
+  height:28px;min-width:28px;padding:0 8px;
+  border-radius:50%;background:#fff;
   border:2.5px solid var(--day-color,#1A1A1A);color:var(--ink);
   display:flex;align-items:center;justify-content:center;
-  font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;
+  font-family:var(--mono);font-size:11px;font-weight:700;line-height:1;
+  white-space:nowrap;cursor:pointer;
   box-shadow:0 2px 8px rgba(0,0,0,.22);transition:transform .16s;
 }
 .place-badge:hover{transform:scale(1.14)}
 .place-badge.is-active{background:var(--day-color,#1A1A1A);color:#fff;transform:scale(1.2);z-index:9}
-/* 编号到两位数（如 1-10）时缩字号，否则撑破 30px 圆 */
-.place-badge.is-long{font-size:9px;letter-spacing:-.04em}
-#map.zoom-far .place-badge{width:25px;height:25px;font-size:10px;border-width:2px}
-#map.zoom-far .place-badge.is-long{font-size:8px}
+/* 远视角整体缩小一圈，编号字号不再按长度分档 */
+#map.zoom-far .place-badge{height:24px;min-width:24px;padding:0 6px;font-size:10px;border-width:2px}
 
 /* ---------- detail card ---------- */
 .detail{border-left:1px solid var(--line);background:var(--card);overflow-y:auto;min-height:0;position:relative}
@@ -437,9 +441,10 @@ body.no-scroll,body.no-scroll #main{overflow:hidden}
   .maplibregl-ctrl-bottom-right{bottom:calc(var(--panel-peek,92px) + 10px)}
   /* 标记：圆点略微放大，但真正的可点区域用透明伪元素往外扩 8px 撑到 44px。
      直接把圆点画成 44px 会让 13 个地点在澳门这么小的地方糊成一片。 */
-  .place-badge{width:34px;height:34px;font-size:12px}
+  /* 手机上放大到 32px 高（横向椭圆），触控热区靠 ::after 外扩到 ≥44px */
+  .place-badge{height:32px;min-width:32px;padding:0 9px;font-size:12px}
   .place-badge::after{content:"";position:absolute;inset:-8px;border-radius:50%}
-  #map.zoom-far .place-badge{width:28px;height:28px;font-size:10px}
+  #map.zoom-far .place-badge{height:27px;min-width:27px;padding:0 7px;font-size:10px}
 
   .shotbox{padding:16px}
   .shotbox-close{width:44px;height:44px}

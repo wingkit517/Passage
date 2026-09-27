@@ -1,5 +1,6 @@
-/* 旅行工作台 — 核心逻辑
-   城市与行程数据全部来自 data/places.js，本文件不含任何城市 / 天数硬编码。
+/* Passage — 旅行工作台核心逻辑
+   城市与行程数据全部来自 data/places.js，本文件不含任何城市 / 天数硬编码
+   （产品名同样来自数据层的 APP.name，不写死在这里）。
    数据来源与坐标精度说明见 data/places.js 顶部注释。 */
 (function () {
   'use strict';
@@ -8,6 +9,8 @@
   if (!D) { console.error('data/places.js 未加载'); return; }
 
   var MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+  /* 产品名从数据层取，改 data/places.js 的 APP.name 就能整体换名 */
+  var BRAND = (D.APP && D.APP.name) || '旅行工作台';
   var CITY = D.CITY;
   var DAYS = D.DAYS;
   var PLACES = D.PLACES;
@@ -152,7 +155,7 @@
       p.osmUrl = p.osmUrl || ('https://www.openstreetmap.org/?mlat=' + p.lat +
         '&mlon=' + p.lng + '#map=17/' + p.lat + '/' + p.lng);
     });
-    if (bad.length) console.warn('[旅行工作台] 以下地点缺少有效经纬度，已置为 0,0：', bad.join('、'));
+    if (bad.length) console.warn('[' + BRAND + '] 以下地点缺少有效经纬度，已置为 0,0：', bad.join('、'));
 
     /* 4 · 排序与编号：order 缺省时保持原数组顺序 */
     DAYS.forEach(function (d, di) {
@@ -222,15 +225,17 @@
       var el = document.getElementById(id);
       if (el) el.textContent = text;
     };
-    document.title = t.title + ' · 旅行工作台';
+    document.title = t.title + ' · ' + BRAND;
     /* 只有一天时，「逐天看」「点一天」这些说法会读着别扭——文案跟着天数走 */
     var oneDay = DAYS.length === 1;
-    set('brandMark', c.name + '旅行工作台');
-    set('brandSub', c.en + ' · ' + PLACES.length + ' PLACES, ONE CITY');
+    set('brandMark', BRAND);
+    /* 「ONE CITY」在跨城行程里会直接说谎，所以城市数不进文案，只报地点数与天数 */
+    set('brandSub', c.en + ' · ' + PLACES.length + ' PLACES' +
+      (oneDay ? '' : ', ' + DAYS.length + ' DAYS'));
     set('hhMark', c.en + ' · ' + (oneDay ? '1 日行程' : DAYS.length + ' 日行程'));
+    /* 副标题不再写死「澳门半岛 / 路环」——城市和片区都由数据决定，文案只描述结构 */
     set('hhSub', oneDay
-      ? '一天走完：上午澳门半岛、下午路环岛，地点按营业时间与步行距离串成一条线。' +
-        '点开地图工作台，可以看路线、看周边吃什么。'
+      ? '一天走完。地点按营业时间与步行距离串成一条线，点开地图工作台可以看路线、看周边吃什么。'
       : DAYS.length + ' 天按地理片区切分，每天的地点尽量集中，按步行距离串成一条线。' +
         '点开地图工作台，可以逐天看路线、看周边吃什么。');
     set('homeSec', oneDay ? '这一天怎么走' : '这 ' + DAYS.length + ' 天怎么走');
@@ -354,6 +359,11 @@
 
     /* 缩放后重新计算标记避让；低缩放级别把标记缩小，减少拥挤 */
     map.on('zoomend', spreadMarkers);
+    /* 平移/旋转结束后也重新排一次——zoomend 只在缩放改变时触发，
+       纯平移 + fitAll 缩放不变的情况（如切天后再 fit）不经过 zoomend，
+       标记就会停在过期的投影位置上。moveend 在 zoom 与 pan 后都会触发，
+       同一帧重复执行也是无副作用的（relaxation 收敛后 moved=false 直接跳出）。 */
+    map.on('moveend', spreadMarkers);
     map.on('zoom', function () {
       var c = map.getContainer();
       if (c) c.classList.toggle('zoom-far', map.getZoom() < 12.4);
@@ -388,6 +398,11 @@
     DAYS.forEach(function (d) {
       var id = 'route-' + d.index;
       if (map.getSource(id)) return;
+      /* 只有 1 个地点的日期画不出线：GeoJSON 的 LineString 至少要 2 个坐标。
+         实测（2026-09-27，MapLibre GL JS 5.24）：塞 1 个坐标不会抛错，图层照样建起来，
+         只是没有任何可见输出——即"不报错的静默失败"，比抛错更难排查。
+         所以不足 2 个点就不建这一天的路线图层：标记照常显示，只是没有虚线。 */
+      if (routeCoords(d.index).length < 2) return;
       map.addSource(id, {
         type: 'geojson',
         data: { type: 'Feature', geometry: { type: 'LineString', coordinates: routeCoords(d.index) } }
@@ -435,8 +450,9 @@
       if (visibleDays().indexOf(p.day) < 0) return;
       var el = document.createElement('button');
       el.type = 'button';
-      el.className = 'place-badge' + (state.activeId === p.id ? ' is-active' : '') +
-        (p.badge.length > 3 ? ' is-long' : '');
+      /* 地图徽章改成横向椭圆后宽度随编号长度走，不再需要 is-long 缩字号
+         （列表里的 .pr-badge 仍是固定宽度，那边的 is-long 照旧保留） */
+      el.className = 'place-badge' + (state.activeId === p.id ? ' is-active' : '');
       el.style.setProperty('--day-color', dayColor(p.day));
       el.textContent = p.badge;
       el.title = p.name;
@@ -452,7 +468,10 @@
 
   /* 城市尺度下多个地点会挤在一起（步行可达的两处相距可能只有 300m，
      编号徽章会完全重叠）。用一次松弛迭代把重叠的标记在屏幕上推开，
-     位移限制在 ±24px，保证标记仍然贴着真实位置。 */
+     位移限制在 ±MAXOFF，保证标记仍然贴着真实位置。
+     MIN 跟着徽章实际宽度走——徽章改成横向椭圆后约 40–46px 宽，
+     所以最小间距也相应提到 44px；MAXOFF 28px。 */
+  var SPREAD_MIN = 44, SPREAD_MAXOFF = 28;
   function spreadMarkers() {
     if (!map || !state.mapReady) return;
     var list = PLACES.filter(function (p) {
@@ -465,7 +484,6 @@
       return { id: p.id, x: pt.x, y: pt.y, dx: 0, dy: 0 };
     });
 
-    var MIN = 34, MAXOFF = 24;
     for (var it = 0; it < 16; it++) {
       var moved = false;
       for (var i = 0; i < pts.length; i++) {
@@ -476,8 +494,8 @@
           var dx = bx - ax, dy = by - ay;
           var d = Math.sqrt(dx * dx + dy * dy);
           if (d === 0) { dx = 0.7; dy = 0.7; d = 1; }
-          if (d < MIN) {
-            var push = (MIN - d) / 2, ux = dx / d, uy = dy / d;
+          if (d < SPREAD_MIN) {
+            var push = (SPREAD_MIN - d) / 2, ux = dx / d, uy = dy / d;
             a.dx -= ux * push; a.dy -= uy * push;
             b.dx += ux * push; b.dy += uy * push;
             moved = true;
@@ -490,8 +508,8 @@
     pts.forEach(function (o) {
       var m = markerByPlace[o.id];
       if (!m) return;
-      var dx = Math.max(-MAXOFF, Math.min(MAXOFF, o.dx));
-      var dy = Math.max(-MAXOFF, Math.min(MAXOFF, o.dy));
+      var dx = Math.max(-SPREAD_MAXOFF, Math.min(SPREAD_MAXOFF, o.dx));
+      var dy = Math.max(-SPREAD_MAXOFF, Math.min(SPREAD_MAXOFF, o.dy));
       m.setOffset([dx, dy]);
     });
   }
@@ -500,8 +518,6 @@
     if (!map) return;
     var pts = (state.day === 'all' ? PLACES : byDay(Number(state.day)));
     if (!pts.length) return;
-    var b = new maplibregl.LngLatBounds();
-    pts.forEach(function (p) { b.extend([p.lng, p.lat]); });
     // 手机上底部有行程面板，留出更大的下边距，避免标记被遮住。
     // 竖屏按「收起态」留（那是默认状态）；横屏面板在左侧，上下对称即可。
     var pad = isFlat()
@@ -509,6 +525,24 @@
       : isNarrow()
         ? { top: 70, bottom: 132, left: 30, right: 30 }
         : { top: 90, bottom: 90, left: 90, right: 90 };
+    /* 只有 1 个地点时包围盒退化成「一个点」，宽高都是 0。
+       实测（2026-09-27，MapLibre GL JS 5.24）：这种情况 fitBounds 不报错，
+       内部缩放算出 Infinity、再被上面的 maxZoom:14 夹住，最终落到 zoom 14、中心就是那个点
+       ——和下面这段显式写法结果完全一致。
+       之所以仍然显式处理：这个正确结果依赖 maxZoom 恰好设了 14，
+       以及 MapLibre 肯把 Infinity 一路算下去。写清楚比依赖内部行为稳。 */
+    if (pts.length === 1) {
+      map.easeTo({
+        center: [pts[0].lng, pts[0].lat],
+        zoom: 14,
+        pitch: CITY.pitch,
+        bearing: CITY.bearing,
+        duration: state.reduceMotion ? 0 : 900
+      });
+      return;
+    }
+    var b = new maplibregl.LngLatBounds();
+    pts.forEach(function (p) { b.extend([p.lng, p.lat]); });
     map.fitBounds(b, {
       padding: pad,
       duration: state.reduceMotion ? 0 : 900,
@@ -769,10 +803,14 @@
     sortSnapshot = PLACES.map(function (p) { return { id: p.id, order: p.order, badge: p.badge }; });
 
     var anchor = state.anchorStart;
-    var before = 0, after = 0, changed = 0;
+    var before = 0, after = 0, changed = 0, evaluated = 0;
     days.forEach(function (di) {
       var list = byDay(di);
+      /* 少于 3 个点没有可优化的折返：2 个点的路径长度与先后顺序无关。
+         这类日期直接跳过，但要在下面的提示里说清楚「跳过了」，
+         不能笼统报一句「已经是最短的」——那是没算过才得出的结论。 */
       if (list.length < 3) return;
+      evaluated++;
       before += pathLen(list);
 
       var sorted;
@@ -809,7 +847,10 @@
     var scope = days.length === DAYS.length && DAYS.length > 1
       ? '全部 ' + DAYS.length + ' 天'
       : DAYS[days[0]].name;
-    if (!changed || before - after < 1) {
+    if (!evaluated) {
+      sortSnapshot = null;
+      sortNote('<b>' + scope + '</b>：可排序的地点少于 3 处，没有可优化的折返。');
+    } else if (!changed || before - after < 1) {
       sortSnapshot = null;
       sortNote('<b>' + scope + '</b>：当前顺序已经是最短的，没有可优化的折返。');
     } else {
@@ -1048,6 +1089,29 @@
       window.open('https://www.openstreetmap.org/?mlat=' + p.lat + '&mlon=' + p.lng + '#map=17/' + p.lat + '/' + p.lng, '_blank', 'noopener');
     });
   }
+
+  /* ---------------- 只读调试句柄 ----------------
+     给自动化验证脚本用：地图实例、规整后的数据、当前视图状态。
+     全是取值函数，不暴露任何写入口，也不参与业务逻辑。
+     需要它的原因：地图实例与 DAYS/PLACES 都在 IIFE 闭包里，
+     外面既拿不到 map（没法确认某天的路线图层建了没有），
+     也看不到 normalize() 之后真正生效的数据。 */
+  window.PASSAGE = {
+    map: function () { return map; },
+    data: D,
+    state: state,
+    days: function () { return DAYS; },
+    places: function () { return PLACES; },
+    /* 某一天的路线图层状态：'no-map' / 'missing'（没建）/ 'visible' / 'none'（建了但隐藏）。
+       注意 'missing' 与 'none' 必须区分开——后者是 MapLibre 里 visibility 的合法取值，
+       混在一起就分不清「没建图层」和「建了但隐藏」了。 */
+    routeLayer: function (i) {
+      if (!map) return 'no-map';
+      var id = 'route-' + i + '-line';
+      if (!map.getLayer(id)) return 'missing';
+      return map.getLayoutProperty(id, 'visibility') || 'visible';
+    }
+  };
 
   /* ---------------- 启动 ---------------- */
   renderChrome();
