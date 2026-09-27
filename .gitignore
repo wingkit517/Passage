@@ -23,3 +23,9 @@ Icon?
 *.log
 __pycache__/
 *.py[cod]
+
+# ---------- 参照笔记的原始配图：不对外发布 ----------
+# 版权归原作者 @Reese小姐爱做梦 所有，仅作本地设计参考。
+# 目录留一份 README.md 说明，图片本身不入库。
+docs/assets/参考-小红书原图/*
+!docs/assets/参考-小红书原图/README.md
